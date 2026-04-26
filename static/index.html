@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Storybook ad pipeline</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <h1>Storybook ad pipeline</h1>
+    <p class="muted">LangGraph + Gemini — product story, scenes, images (runs stored in memory when MongoDB is off)</p>
+  </header>
+  <main>
+    <section class="card">
+      <h2>New run</h2>
+      <form id="run-form">
+        <label>Brand <input name="brand" type="text" placeholder="Brand" /></label>
+        <label>Product name <input name="product_name" type="text" placeholder="Product" required /></label>
+        <label>Goal <input name="goal" type="text" placeholder="Campaign goal" /></label>
+        <label>Target audience <input name="target_audience" type="text" placeholder="Audience" /></label>
+        <label>Notes <textarea name="notes" rows="2" placeholder="Extra context"></textarea></label>
+        <div class="row">
+          <label>Target runtime (s) <input name="target_runtime_seconds" type="number" step="0.1" value="8" /></label>
+          <label>Max runtime (s) <input name="target_runtime_max_seconds" type="number" step="0.1" value="10" /></label>
+        </div>
+        <label>Product image (optional) <input name="product_image" type="file" accept="image/*" /></label>
+        <button type="submit">Start pipeline</button>
+      </form>
+      <p id="create-status" class="status"></p>
+    </section>
+    <section class="card" id="poll-section" hidden>
+      <h2>Run <code id="run-id"></code></h2>
+      <p class="status" id="run-status"></p>
+      <div id="step-progress" class="step-progress" aria-label="Pipeline step status"></div>
+      <div class="actions">
+        <a id="dl" href="#" download>Download ZIP</a>
+        <button type="button" id="btn-regen-script">Regenerate from script</button>
+        <button type="button" id="btn-regen-scenes">Regenerate from scenes</button>
+        <button type="button" id="btn-regen-images">Regenerate from images</button>
+      </div>
+      <details open>
+        <summary>Product template</summary>
+        <pre id="out-template"></pre>
+      </details>
+      <details>
+        <summary>Story (draft / approved)</summary>
+        <pre id="out-story"></pre>
+      </details>
+      <details>
+        <summary>Scenes JSON</summary>
+        <pre id="out-scenes"></pre>
+      </details>
+      <details open>
+        <summary>Scene images (thumbnails + metadata)</summary>
+        <p class="muted small">Thumbnails use the <code>url</code> on each image (S3 objects). <strong>Requires <code>GEMINI_IMAGE_MODEL</code> to be an image model</strong> (e.g. <code>gemini-2.5-flash-image</code>) and S3 settings in <code>.env</code>. Presigned links are refreshed on each run poll if configured.</p>
+        <h3 class="thumbs-heading">Thumbnails</h3>
+        <div id="img-row" class="img-row" aria-label="Scene thumbnails"></div>
+        <h3 class="thumbs-heading">Image metadata (JSON)</h3>
+        <pre id="out-images"></pre>
+      </details>
+      <details>
+        <summary>Error</summary>
+        <pre id="out-error"></pre>
+      </details>
+    </section>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>
