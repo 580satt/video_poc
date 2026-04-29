@@ -12,7 +12,7 @@ from app.db.mongo import RunStore, get_run_store
 from app.graph import nodes as N
 from app.graph.state import StorybookState
 from app.llm.gemini import GeminiClient
-from app.rag.chroma_narrative import query_narrative_rag
+from app.rag.chroma_narrative import narrative_trace_failed, query_narrative_rag_with_trace
 
 logger = logging.getLogger(__name__)
 
@@ -63,8 +63,6 @@ def build_app_graph() -> StateGraph:
     g.add_node("save_scenes_approved", N.node_save_scenes_approved)
     g.add_node("generate_images", N.node_generate_images)
     g.add_node("complete", N.node_complete)
-    g.add_node("fail_script", N.node_fail_script)
-    g.add_node("fail_scenes", N.node_fail_scenes)
     g.add_node("pick_best_script", N.node_pick_best_script)
     g.add_node("pick_best_scenes", N.node_pick_best_scenes)
 
@@ -105,8 +103,6 @@ def build_app_graph() -> StateGraph:
     g.add_edge("save_scenes_approved", "generate_images")
     g.add_edge("generate_images", "complete")
     g.add_edge("complete", END)
-    g.add_edge("fail_script", END)
-    g.add_edge("fail_scenes", END)
     return g.compile()
 
 
@@ -117,6 +113,7 @@ def _base_state() -> dict[str, Any]:
         "pending_error": None,
         "image_pass_full": True,
         "rag_context_narrative": "",
+        "rag_narrative_trace": {},
         "script_review_history": [],
         "scenes_review_history": [],
         "review_trace": [],
@@ -247,14 +244,29 @@ async def run_regenerate(
         init["images"] = []
         init["image_pass_full"] = True
         init["images_draft_count"] = 0
+        init["review_trace"] = doc.get("review_trace") or []
+        init["rag_context_narrative"] = doc.get("rag_context_narrative") or ""
+        rt = doc.get("rag_narrative_trace")
+        init["rag_narrative_trace"] = rt if isinstance(rt, dict) else {}
     if from_step in ("script", "scenes") and isinstance(pt, dict):
         try:
-            init["rag_context_narrative"] = await asyncio.to_thread(
-                query_narrative_rag, pt, raw, s
+            ctx, trace = await asyncio.to_thread(query_narrative_rag_with_trace, pt, raw, s)
+            init["rag_context_narrative"] = ctx
+            init["rag_narrative_trace"] = trace
+            await st.update_run(
+                run_id,
+                {"rag_context_narrative": ctx, "rag_narrative_trace": trace},
             )
         except Exception as e:
             logger.warning("RAG for regenerate failed: %s", e)
             init["rag_context_narrative"] = ""
+            init["rag_narrative_trace"] = narrative_trace_failed(
+                s, f"exception: {e}", hint="Unexpected error while refreshing RAG during regenerate."
+            )
+            await st.update_run(
+                run_id,
+                {"rag_context_narrative": "", "rag_narrative_trace": init["rag_narrative_trace"]},
+            )
     await st.update_run(run_id, {"status": "running", "error_detail": None})
     out = await graph.ainvoke(init)
     return out

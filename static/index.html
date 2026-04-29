@@ -24,6 +24,12 @@
           <label>Target runtime (s) <input name="target_runtime_seconds" type="number" step="0.1" value="8" /></label>
           <label>Max runtime (s) <input name="target_runtime_max_seconds" type="number" step="0.1" value="10" /></label>
         </div>
+        <label>Story + scenes model
+          <select name="story_scenes_provider">
+            <option value="gemini" selected>Gemini (e.g. gemini-2.5-flash)</option>
+            <option value="wavespeed">Claude via WaveSpeed (anthropic/claude-opus-4.7)</option>
+          </select>
+        </label>
         <label>Product image (optional) <input name="product_image" type="file" accept="image/*" /></label>
         <button type="submit">Start pipeline</button>
       </form>
@@ -33,7 +39,27 @@
       <h2>Run <code id="run-id"></code></h2>
       <p class="status" id="run-status"></p>
       <div id="step-progress" class="step-progress" aria-label="Pipeline step status"></div>
+      <section class="storyboard-section" aria-label="Visual storyboard and RAG">
+        <div class="storyboard-layout">
+          <div class="storyboard-main">
+            <h2 class="storyboard-hero">Storyboard</h2>
+            <p class="muted small">Each card shows a frame, panel label, a short line derived from the scene copy, and the full <code>visual_description</code> in brief.</p>
+            <div id="storyboard-grid" class="storyboard-grid"></div>
+          </div>
+          <aside class="rag-column" aria-label="Narrative RAG retrieval">
+            <h2 class="rag-column-title">RAG (narrative)</h2>
+            <p class="muted small rag-column-lead">Chunks are loaded only when <code>CHROMA_PERSIST_PATH</code> points at your DB and embeddings are configured. The panel then lists the same top-<code>k</code> documents injected into script/scene prompts.</p>
+            <div id="rag-panel-body" class="rag-panel-body"></div>
+          </aside>
+        </div>
+      </section>
+      <details open>
+        <summary>Full run, reviewers, ratings, traces (JSON)</summary>
+        <p class="muted small">Structured export: <code>script_*</code>, <code>scenes_*</code>, <code>review_trace</code>, <code>images</code> (S3 <code>url</code>s), <code>step_status</code>, etc.</p>
+        <pre id="out-run-json" class="pre-tall" spellcheck="false"></pre>
+      </details>
       <div class="actions">
+        <a id="dl-json" href="#" target="_blank" rel="noopener">Open JSON export</a>
         <a id="dl" href="#" download>Download ZIP</a>
         <button type="button" id="btn-regen-script">Regenerate from script</button>
         <button type="button" id="btn-regen-scenes">Regenerate from scenes</button>

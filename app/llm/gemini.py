@@ -3,25 +3,15 @@ from __future__ import annotations
 import base64
 import json
 import logging
-import re
 from typing import Any, Optional
 
 from google import genai
 from google.genai import types
 
 from app.config import Settings, get_settings
+from app.llm.json_utils import parse_json_loose
 
 logger = logging.getLogger(__name__)
-
-_JSON_FENCE = re.compile(r"```(?:json)?\s*([\s\S]*?)```", re.IGNORECASE)
-
-
-def _parse_json_loose(text: str) -> Any:
-    text = text.strip()
-    m = _JSON_FENCE.search(text)
-    if m:
-        text = m.group(1).strip()
-    return json.loads(text)
 
 
 class GeminiClient:
@@ -43,9 +33,14 @@ class GeminiClient:
         temperature: float = 0.7,
     ) -> str:
         m = model or self._text
-        cfg = types.GenerateContentConfig(
-            temperature=temperature,
-        )
+        mo = int(getattr(self._settings, "gemini_max_output_tokens", 8192) or 8192)
+        try:
+            cfg = types.GenerateContentConfig(
+                temperature=temperature,
+                max_output_tokens=mo,
+            )
+        except (TypeError, ValueError):
+            cfg = types.GenerateContentConfig(temperature=temperature)
         resp = self._client.models.generate_content(
             model=m,
             contents=prompt,
@@ -67,7 +62,7 @@ class GeminiClient:
         for attempt in range(3):
             text = self.generate_text(full, model=m, temperature=0.2 if attempt else 0.3)
             try:
-                return _parse_json_loose(text)
+                return parse_json_loose(text)
             except json.JSONDecodeError:
                 full = (
                     prompt

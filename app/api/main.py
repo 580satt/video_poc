@@ -47,6 +47,48 @@ def _run_dict(doc: dict[str, Any] | None) -> dict[str, Any] | None:
     return d
 
 
+# Subset returned by GET /api/runs/{id}/export (matches static export in app.js)
+_RUN_EXPORT_KEYS: tuple[str, ...] = (
+    "run_id",
+    "status",
+    "error_detail",
+    "step_status",
+    "raw_input",
+    "target_runtime_seconds",
+    "target_runtime_max_seconds",
+    "product_template",
+    "rag_context_narrative",
+    "rag_narrative_trace",
+    "story",
+    "script_revisions",
+    "script_last_rating",
+    "script_reviewer_feedback",
+    "script_review_approved",
+    "script_chosen",
+    "script_review_history",
+    "last_script_review",
+    "scenes_approved",
+    "scenes",
+    "scenes_revisions",
+    "scenes_last_rating",
+    "scenes_reviewer_feedback",
+    "scenes_review_approved",
+    "scenes_chosen",
+    "scenes_review_history",
+    "last_scenes_review",
+    "image_revisions",
+    "images",
+    "review_trace",
+    "created_at",
+    "updated_at",
+    "_id",
+)
+
+
+def _run_export_payload(d: dict[str, Any]) -> dict[str, Any]:
+    return {k: d[k] for k in _RUN_EXPORT_KEYS if k in d}
+
+
 async def _pipeline_task(
     run_id: str,
     raw: dict,
@@ -91,6 +133,7 @@ async def create_run(
     notes: str = Form(""),
     target_runtime_seconds: Optional[str] = Form(None),
     target_runtime_max_seconds: Optional[str] = Form(None),
+    story_scenes_provider: Optional[str] = Form(None),
     product_image: UploadFile | None = File(None),
 ):
     s = get_settings()
@@ -104,6 +147,8 @@ async def create_run(
         "target_audience": target_audience,
         "notes": notes,
     }
+    if story_scenes_provider not in (None, ""):
+        raw["story_scenes_provider"] = story_scenes_provider.strip()
     im_bytes: bytes | None = None
     im_mime: str | None = None
     if product_image and product_image.filename:
@@ -123,6 +168,7 @@ async def create_run(
         {
             "status": "running",
             "raw_input": raw,
+            "story_scenes_provider": raw.get("story_scenes_provider"),
             "target_runtime_seconds": tr,
             "target_runtime_max_seconds": tmax,
             "step_status": {
@@ -143,6 +189,16 @@ async def get_run(run_id: str):
         raise HTTPException(404, "Run not found")
     d = _run_dict(doc)
     return enrich_run_image_records(d)
+
+
+@app.get("/api/runs/{run_id}/export")
+async def export_run_json(run_id: str):
+    """Run metadata, all reviewer ratings/feedback/history, review_trace, images (with S3 urls), step_status."""
+    doc = await _store.get_run(run_id)
+    if not doc:
+        raise HTTPException(404, "Run not found")
+    d = enrich_run_image_records(_run_dict(doc)) or {}
+    return _run_export_payload(d)
 
 
 @app.get("/api/runs/{run_id}/story")
@@ -196,6 +252,8 @@ async def download_run(run_id: str):
             z.writestr("story.txt", str(doc.get("story", "")))
         if doc.get("scenes"):
             z.writestr("scenes.json", json.dumps(doc["scenes"], indent=2, default=str))
+        if doc.get("review_trace") is not None:
+            z.writestr("review_trace.json", json.dumps(doc.get("review_trace") or [], indent=2, default=str))
         for im in doc.get("images") or []:
             if not isinstance(im, dict):
                 continue

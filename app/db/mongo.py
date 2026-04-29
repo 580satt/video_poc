@@ -20,6 +20,35 @@ class RunStore(Protocol):
     async def close(self) -> None: ...
 
 
+def _apply_patch_for_in_memory(existing: dict[str, Any], patch: dict[str, Any]) -> None:
+    """Merge patch into existing run doc.
+
+    Pipeline code uses Mongo dotted keys from `step_status_patch` (e.g. ``step_status.template``).
+    Motor stores those as nested fields; a plain dict.update() would add a *literal* key
+    ``'step_status.template'`` and leave ``step_status`` stale — so the UI never left
+    "in progress". We merge dotted keys into ``step_status`` here.
+    """
+    now = _utcnow()
+    incoming = {**patch, "updated_at": now}
+    dotted: dict[str, Any] = {}
+    normal: dict[str, Any] = {}
+    for k, v in incoming.items():
+        if k.startswith("step_status."):
+            dotted[k[len("step_status.") :]] = v
+        else:
+            normal[k] = v
+    for k, v in normal.items():
+        if k == "step_status":
+            continue
+        existing[k] = v
+    cur = existing.get("step_status")
+    cur = cur if isinstance(cur, dict) else {}
+    if "step_status" in normal and isinstance(normal["step_status"], dict):
+        existing["step_status"] = {**cur, **normal["step_status"], **dotted}
+    elif dotted:
+        existing["step_status"] = {**cur, **dotted}
+
+
 class InMemoryRunStore:
     """Dev / no-DB: keeps run state in process memory (lost on restart)."""
 
@@ -30,11 +59,9 @@ class InMemoryRunStore:
         return
 
     async def update_run(self, run_id: str, patch: dict[str, Any]) -> None:
-        now = _utcnow()
-        p = {**patch, "updated_at": now}
         if run_id not in self._runs:
-            self._runs[run_id] = {"run_id": run_id, "created_at": now}
-        self._runs[run_id].update(p)
+            self._runs[run_id] = {"run_id": run_id, "created_at": _utcnow()}
+        _apply_patch_for_in_memory(self._runs[run_id], patch)
 
     async def get_run(self, run_id: str) -> Optional[dict[str, Any]]:
         doc = self._runs.get(run_id)

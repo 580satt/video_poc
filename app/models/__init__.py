@@ -8,6 +8,7 @@ from app.models.schemas import (
     SceneItem,
     ScenesPayload,
 )
+from app.models.vector_table import VectorTable
 
 __all__ = [
     "CreateRunRequest",
@@ -18,4 +19,5 @@ __all__ = [
     "RunStatus",
     "SceneItem",
     "ScenesPayload",
+    "VectorTable",
 ]
