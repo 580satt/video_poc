@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any, Optional, Protocol
 
@@ -7,6 +8,8 @@ from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from pymongo.errors import OperationFailure, ServerSelectionTimeoutError
 
 from app.config import Settings, get_settings
+
+logger = logging.getLogger(__name__)
 
 
 def _utcnow() -> datetime:
@@ -17,6 +20,7 @@ class RunStore(Protocol):
     async def connect(self) -> None: ...
     async def update_run(self, run_id: str, patch: dict[str, Any]) -> None: ...
     async def get_run(self, run_id: str) -> Optional[dict[str, Any]]: ...
+    async def insert_pipeline_output(self, run_id: str, kind: str, payload: dict[str, Any]) -> None: ...
     async def close(self) -> None: ...
 
 
@@ -67,6 +71,16 @@ class InMemoryRunStore:
         doc = self._runs.get(run_id)
         return None if doc is None else dict(doc)
 
+    async def insert_pipeline_output(self, run_id: str, kind: str, payload: dict[str, Any]) -> None:
+        if run_id not in self._runs:
+            self._runs[run_id] = {"run_id": run_id, "created_at": _utcnow()}
+        now = _utcnow()
+        cur = self._runs[run_id].get("pipeline_outputs")
+        cur_list = list(cur) if isinstance(cur, list) else []
+        cur_list.append({"kind": kind, "payload": dict(payload), "created_at": now})
+        self._runs[run_id]["pipeline_outputs"] = cur_list
+        self._runs[run_id]["updated_at"] = now
+
     async def close(self) -> None:
         return
 
@@ -77,13 +91,21 @@ class MongoRunStore:
         self._client: Optional[AsyncIOMotorClient] = None
         self._db: Optional[AsyncIOMotorDatabase] = None
 
+    def _collection_name(self) -> str:
+        n = (self._settings.mongodb_collection or "").strip()
+        return n or "video_ad_pipeline"
+
+    def _runs(self) -> Any:
+        return self.db[self._collection_name()]
+
     async def connect(self) -> None:
         if self._client is None:
             self._client = AsyncIOMotorClient(self._settings.mongodb_uri)
             self._db = self._client[self._settings.mongodb_db]
             try:
-                await self._db.runs.create_index("run_id", unique=True)
-                await self._db.runs.create_index("created_at")
+                coll = self._runs()
+                await coll.create_index("run_id", unique=True)
+                await coll.create_index("created_at")
             except ServerSelectionTimeoutError as e:
                 err = str(e).lower()
                 if "ssl" in err or "tls" in err or "handshake" in err:
@@ -106,7 +128,8 @@ class MongoRunStore:
                         "for example:\n"
                         "  MONGODB_URI=mongodb://USER:PASSWORD@localhost:27017/?authSource=admin\n"
                         "Use your actual username, password, and authSource (often 'admin' or the DB name). "
-                        "MONGODB_DB is applied separately and names the active database (e.g. storybook).\n"
+                        "MONGODB_DB selects the database (e.g. ads_scraper_db); MONGODB_COLLECTION names the "
+                        "collection for run documents.\n"
                         "For MongoDB Atlas, use the SRV string from the Atlas UI (it includes credentials).\n"
                         f"Original error: {e}"
                     ) from e
@@ -121,7 +144,7 @@ class MongoRunStore:
     async def update_run(self, run_id: str, patch: dict[str, Any]) -> None:
         now = _utcnow()
         p = {**patch, "updated_at": now}
-        await self.db.runs.update_one(
+        await self._runs().update_one(
             {"run_id": run_id},
             {
                 "$set": p,
@@ -131,7 +154,23 @@ class MongoRunStore:
         )
 
     async def get_run(self, run_id: str) -> Optional[dict[str, Any]]:
-        return await self.db.runs.find_one({"run_id": run_id})
+        return await self._runs().find_one({"run_id": run_id})
+
+    async def insert_pipeline_output(self, run_id: str, kind: str, payload: dict[str, Any]) -> None:
+        now = _utcnow()
+        entry = {"kind": kind, "payload": payload, "created_at": now}
+        try:
+            result = await self._runs().update_one(
+                {"run_id": run_id},
+                {"$push": {"pipeline_outputs": entry}, "$set": {"updated_at": now}},
+            )
+            if result.matched_count == 0:
+                logger.warning(
+                    "MongoDB pipeline_outputs: no run document for run_id=%s (push skipped)",
+                    run_id,
+                )
+        except Exception as e:
+            logger.warning("MongoDB pipeline_outputs append failed (run_id=%s kind=%s): %s", run_id, kind, e)
 
     async def close(self) -> None:
         if self._client:

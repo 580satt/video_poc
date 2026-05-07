@@ -872,6 +872,21 @@ async def node_complete(state: StorybookState) -> dict[str, Any]:
             ),
         },
     )
+    await store.insert_pipeline_output(
+        rid,
+        "run_complete",
+        {
+            "product_template": state.get("product_template"),
+            "story": state.get("story"),
+            "scenes_payload": state.get("scenes_payload"),
+            "images": image_refs,
+            "target_runtime_seconds": state.get("target_runtime_seconds"),
+            "target_runtime_max_seconds": state.get("target_runtime_max_seconds"),
+            "script_chosen": state.get("script_chosen"),
+            "scenes_chosen": state.get("scenes_chosen"),
+            "rag_context_narrative": (state.get("rag_context_narrative") or "")[:20000],
+        },
+    )
     return {
         "status": "complete",
         "images_approved": True,

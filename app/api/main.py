@@ -25,8 +25,15 @@ _store = get_run_store()
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    await _store.connect()
     s = get_settings()
+    logger.info(
+        "Persistence: %s (USE_MONGODB=%s, db=%s, collection=%s)",
+        type(_store).__name__,
+        s.use_mongodb,
+        s.mongodb_db,
+        s.mongodb_collection,
+    )
+    await _store.connect()
     s.artifacts_dir.mkdir(parents=True, exist_ok=True)
     yield
     await _store.close()
@@ -79,6 +86,7 @@ _RUN_EXPORT_KEYS: tuple[str, ...] = (
     "image_revisions",
     "images",
     "review_trace",
+    "pipeline_outputs",
     "created_at",
     "updated_at",
     "_id",

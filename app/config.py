@@ -1,16 +1,30 @@
 from pathlib import Path
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Load `.env` from the project root (parent of `app/`), not from the process CWD — otherwise
+# starting uvicorn from another directory leaves USE_MONGODB unset and runs stay in-memory.
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=_PROJECT_ROOT / ".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     gemini_api_key: str = ""
     # When False, the API uses in-process storage only (no MongoDB; survives until process exit).
     use_mongodb: bool = False
     mongodb_uri: str = "mongodb://localhost:27017"
-    mongodb_db: str = "storybook"
+    mongodb_db: str = "ads_scraper_db"
+    # Single collection in MONGODB_DB: run document + `pipeline_outputs` array (final snapshot, etc.).
+    mongodb_collection: str = Field(
+        default="video_ad_pipeline",
+        validation_alias=AliasChoices("mongodb_collection", "mongodb_outputs_collection"),
+    )
 
     # Story + scene JSON (when story_scenes_llm_provider=gemini); template + reviewers also use gemini_text_model where applicable
     gemini_text_model: str = "gemini-2.5-flash"

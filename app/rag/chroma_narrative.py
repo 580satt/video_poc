@@ -292,6 +292,13 @@ def query_review_memory(
         return ""
     if not emb:
         return ""
+    if len(emb) != s.openai_embedding_dimensions:
+        logger.warning(
+            "Review memory query skipped: embedding length %s != OPENAI_EMBEDDING_DIMENSIONS %s",
+            len(emb),
+            s.openai_embedding_dimensions,
+        )
+        return ""
     try:
         res = coll.query(
             query_embeddings=[emb],
@@ -353,7 +360,12 @@ def upsert_review_memory(
     except Exception as e:
         logger.warning("Review memory embed (upsert) failed: %s", e)
         return
-    if not emb:
+    if not emb or len(emb) != s.openai_embedding_dimensions:
+        logger.warning(
+            "Review memory upsert skipped: embedding length %s != OPENAI_EMBEDDING_DIMENSIONS %s",
+            len(emb or []),
+            s.openai_embedding_dimensions,
+        )
         return
     rid = review_doc_id(run_id, step, draft)
     try:

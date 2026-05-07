@@ -12,7 +12,7 @@ Python service: product brief → LLM template → creative story (review loop) 
    pip install -e .
    ```
 
-3. Copy `.env.example` to `.env` and set `GEMINI_API_KEY`, `MONGODB_URI`, and S3: `S3_BUCKET`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_DEFAULT_REGION` (or use instance/credential provider and leave access keys empty when appropriate).
+3. Copy `.env.example` to `.env` and set `GEMINI_API_KEY`, `MONGODB_URI`, `MONGODB_DB` (e.g. `ads_scraper_db`), `MONGODB_COLLECTION` (single collection for runs + pipeline snapshots), and S3: `S3_BUCKET`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_DEFAULT_REGION` (or use instance/credential provider and leave access keys empty when appropriate).
 
    If MongoDB returns **"Command createIndexes requires authentication"**, your server requires a user. Set something like:
    `MONGODB_URI=mongodb://USER:PASSWORD@host:27017/?authSource=admin` (adjust `authSource` to what your server uses, often `admin` or the database name). For Atlas, use the full SRV string from the UI.

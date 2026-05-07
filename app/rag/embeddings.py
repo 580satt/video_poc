@@ -38,7 +38,7 @@ def _embed_azure(s: Settings, texts: list[str]) -> list[list[float]]:
     out: list[list[float]] = []
     size = 16
     for i in range(0, len(texts), size):
-        batch = [t if len(t) <= 30000 else t[:30000] for t in texts[i : i + size]]
+        batch = texts[i : i + size]
         r = client.embeddings.create(
             input=batch,
             model=s.azure_openai_embedding_deployment,
@@ -58,7 +58,7 @@ def _embed_openai_direct(s: Settings, texts: list[str]) -> list[list[float]]:
     out: list[list[float]] = []
     size = 16
     for i in range(0, len(texts), size):
-        batch = [t if len(t) <= 30000 else t[:30000] for t in texts[i : i + size]]
+        batch = texts[i : i + size]
         kwargs: dict = {"model": s.openai_embedding_model, "input": batch}
         if s.openai_embedding_model.startswith("text-embedding-3"):
             kwargs["dimensions"] = s.openai_embedding_dimensions
@@ -69,7 +69,11 @@ def _embed_openai_direct(s: Settings, texts: list[str]) -> list[list[float]]:
 
 
 def embed_texts(texts: list[str], settings: Optional[Settings] = None) -> list[list[float]]:
-    """Embedding vectors: Azure OpenAI (ada-002 deployment) if configured, else direct OpenAI."""
+    """Embedding vectors: Azure OpenAI (deployment) if configured, else direct OpenAI.
+
+    Inputs are sent as-is (no client-side truncation). Each string must fit the model's
+    max context (e.g. ~8k tokens for common OpenAI embedding models) or the API will error.
+    """
     s = settings or get_settings()
     if not texts:
         return []
