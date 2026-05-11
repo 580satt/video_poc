@@ -15,6 +15,8 @@ class StorybookState(TypedDict, total=False):
     product_template: dict[str, Any] | None
     # Injected after template; used in write_script / write_scenes
     rag_context_narrative: str
+    # User-provided long-form brand / insights / psychology (same lifecycle as RAG for script+scenes)
+    brand_psychology_context: str
     # Chroma narrative retrieval debug: collection, top_k, hits, skipped_reason
     rag_narrative_trace: dict[str, Any]
 

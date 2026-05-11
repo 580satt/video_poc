@@ -57,7 +57,7 @@ function buildRunJsonExport(doc) {
   const keys = [
     "run_id", "status", "error_detail", "step_status", "raw_input",
     "target_runtime_seconds", "target_runtime_max_seconds",
-    "product_template", "rag_context_narrative", "rag_narrative_trace", "story",
+    "product_template", "brand_psychology_context", "rag_context_narrative", "rag_narrative_trace", "story",
     "script_revisions", "script_last_rating", "script_reviewer_feedback",
     "script_review_approved", "script_chosen", "script_review_history", "last_script_review",
     "scenes_approved", "scenes", "scenes_revisions", "scenes_last_rating", "scenes_reviewer_feedback",
@@ -78,6 +78,109 @@ function formatStatus(s) {
   if (s === "in_progress") return "in progress";
   if (!s) return "pending";
   return String(s);
+}
+
+function briefTextFromDoc(doc) {
+  if (!doc) return "";
+  const direct =
+    doc.brand_psychology_context != null ? String(doc.brand_psychology_context).trim() : "";
+  if (direct) return direct;
+  const ri = doc.raw_input;
+  if (ri && ri.brand_psychology_context != null) return String(ri.brand_psychology_context).trim();
+  return "";
+}
+
+const VALID_CONTEXT_SOURCES = new Set(["both", "rag", "brief", "none"]);
+
+function contextSourcesFromDoc(doc) {
+  const ri = doc && doc.raw_input;
+  let cs = ri && ri.context_sources != null ? String(ri.context_sources).trim().toLowerCase() : "both";
+  if (!VALID_CONTEXT_SOURCES.has(cs)) cs = "both";
+  const labels = { both: "Both · RAG + brief", rag: "RAG only", brief: "Brief only", none: "Neither" };
+  return {
+    mode: cs,
+    label: labels[cs] || labels.both,
+    useRag: cs === "both" || cs === "rag",
+    useBrief: cs === "both" || cs === "brief",
+  };
+}
+
+function renderContextSummaryStrip(doc) {
+  const el = $("context-summary-strip");
+  if (!el) return;
+  const src = contextSourcesFromDoc(doc);
+  const rag = doc && doc.rag_context_narrative != null ? String(doc.rag_context_narrative).trim() : "";
+  const brief = briefTextFromDoc(doc);
+  let ragLine;
+  let ragCls;
+  if (!src.useRag) {
+    ragLine = "not selected (prompts omit RAG)";
+    ragCls = "context-pill-off";
+  } else if (!rag.length) {
+    ragLine = "selected — empty / system skip";
+    ragCls = "context-pill-warn";
+  } else {
+    ragLine = "in prompts · " + rag.length + " chars";
+    ragCls = "context-pill-on";
+  }
+  let briefLine;
+  let briefCls;
+  if (!src.useBrief) {
+    briefLine = brief.length
+      ? "not selected · text saved (" + brief.length + " chars)"
+      : "not selected";
+    briefCls = "context-pill-off";
+  } else if (!brief.length) {
+    briefLine = "selected — no text";
+    briefCls = "context-pill-warn";
+  } else {
+    briefLine = "in prompts · " + brief.length + " chars";
+    briefCls = "context-pill-on";
+  }
+  el.innerHTML =
+    "<p class='context-mode-line'><strong>Run setting:</strong> " +
+    escapeHtml(src.label) +
+    "</p>" +
+    "<div class='context-pill-row'>" +
+    "<span class='context-pill " +
+    ragCls +
+    "'><strong>RAG</strong> — " +
+    escapeHtml(ragLine) +
+    "</span>" +
+    "<span class='context-pill " +
+    briefCls +
+    "'><strong>Brief</strong> — " +
+    escapeHtml(briefLine) +
+    "</span>" +
+    "</div>" +
+    "<p class='muted small context-pill-note'>Green = selected and present in script &amp; scene LLM prompts. Gray = omitted by your choice (or no text). Amber = selected but missing content or retrieval did not return text.</p>";
+}
+
+function renderUserBriefPanel(doc) {
+  const root = $("user-brief-panel-body");
+  if (!root) return;
+  const src = contextSourcesFromDoc(doc);
+  const brief = briefTextFromDoc(doc);
+  if (!brief) {
+    root.innerHTML =
+      "<p class='muted small'>No brief text on this run. Add content under <strong>Brand / psychology / insights</strong> when starting a run.</p>";
+    return;
+  }
+  let banner = "";
+  if (!src.useBrief) {
+    banner =
+      "<div class='context-omit-banner'><strong>Not injected in script/scene prompts</strong> for this run — your context mode skips the long brief (text remains stored on the run).</div>";
+  }
+  root.innerHTML =
+    banner +
+    "<p class='rag-meta'><strong>Stored characters</strong> " +
+    escapeHtml(String(brief.length)) +
+    (src.useBrief ? " · <span class='rag-ok'>included in prompts</span>" : "") +
+    "</p>" +
+    "<details open class='rag-query'><summary>Full text</summary>" +
+    "<pre class='rag-doc-pre user-brief-pre'>" +
+    escapeHtml(brief) +
+    "</pre></details>";
 }
 
 function renderRagPanel(doc) {
@@ -361,7 +464,9 @@ function startPoll(runId) {
       $("run-status").textContent = "Status: " + st + " - " + overall;
       renderStepProgress(doc);
       renderStoryboardGrid(doc);
+      renderContextSummaryStrip(doc);
       renderRagPanel(doc);
+      renderUserBriefPanel(doc);
       renderRunJsonExport(doc);
       $("out-template").textContent = doc.product_template
         ? JSON.stringify(doc.product_template, null, 2)

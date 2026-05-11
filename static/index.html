@@ -20,6 +20,15 @@
         <label>Goal <input name="goal" type="text" placeholder="Campaign goal" /></label>
         <label>Target audience <input name="target_audience" type="text" placeholder="Audience" /></label>
         <label>Notes <textarea name="notes" rows="2" placeholder="Extra context"></textarea></label>
+        <label>Brand / psychology / insights <textarea name="brand_psychology_context" rows="8" placeholder="Long-form brief (used only if you include “brand brief” in Context below; still saved on the run)"></textarea></label>
+        <label>Context for script &amp; scenes
+          <select name="context_sources">
+            <option value="both" selected>Both — RAG + brand / psychology brief</option>
+            <option value="rag">RAG only (skip long brief in prompts)</option>
+            <option value="brief">Brand brief only (skip Chroma / RAG retrieval)</option>
+            <option value="none">Neither (template fields only)</option>
+          </select>
+        </label>
         <div class="row">
           <label>Target runtime (s) <input name="target_runtime_seconds" type="number" step="0.1" value="8" /></label>
           <label>Max runtime (s) <input name="target_runtime_max_seconds" type="number" step="0.1" value="10" /></label>
@@ -46,10 +55,16 @@
             <p class="muted small">Each card shows a frame, panel label, a short line derived from the scene copy, and the full <code>visual_description</code> in brief.</p>
             <div id="storyboard-grid" class="storyboard-grid"></div>
           </div>
-          <aside class="rag-column" aria-label="Narrative RAG retrieval">
-            <h2 class="rag-column-title">RAG (narrative)</h2>
-            <p class="muted small rag-column-lead">Chunks are loaded only when <code>CHROMA_PERSIST_PATH</code> points at your DB and embeddings are configured. The panel then lists the same top-<code>k</code> documents injected into script/scene prompts.</p>
+          <aside class="rag-column" aria-label="Context used for script and scenes">
+            <h2 class="rag-column-title">Script &amp; scene context</h2>
+            <p class="muted small rag-column-lead">After the template step, the pipeline applies your <strong>Context for script &amp; scenes</strong> choice from the form. RAG and/or the long brief are only injected when selected; the status pills reflect that.</p>
+            <div id="context-summary-strip" class="context-summary-strip" aria-label="What is injected into prompts"></div>
+            <h3 class="context-subheading">RAG (retrieved narratives)</h3>
+            <p class="muted small context-sub-lead">Only when your run includes RAG in <strong>Context for script &amp; scenes</strong> and Chroma/embeddings are configured. In prompts this block is labeled <code>RETRIEVED NARRATIVE REFERENCE</code>.</p>
             <div id="rag-panel-body" class="rag-panel-body"></div>
+            <h3 class="context-subheading">Your brand / psychology brief</h3>
+            <p class="muted small context-sub-lead">Stored on the run from the form. In prompts it appears as <code>USER BRAND / PSYCHOLOGY / INSIGHTS BRIEF</code> only when your context mode includes the brief.</p>
+            <div id="user-brief-panel-body" class="rag-panel-body"></div>
           </aside>
         </div>
       </section>

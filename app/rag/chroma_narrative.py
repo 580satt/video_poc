@@ -46,6 +46,13 @@ def template_to_query_string(product_template: dict[str, Any], raw_user_input: d
     ex = (product_template or {}).get("extra")
     if isinstance(ex, dict) and ex:
         parts.append(f"extra: {json.dumps(ex, ensure_ascii=False)[:1500]}")
+    cs = str(raw.get("context_sources") or "").strip().lower()
+    if cs not in ("both", "rag", "brief", "none"):
+        cs = "both"
+    include_brand_snippet = cs in ("both", "brief")
+    bp = str(raw.get("brand_psychology_context") or "").strip()
+    if bp and include_brand_snippet:
+        parts.append(f"brand_psychology_context: {bp[:2500]}")
     return " | ".join(parts) or json.dumps(product_template, ensure_ascii=False)[:4000]
 
 
@@ -220,6 +227,25 @@ def narrative_trace_failed(settings: Settings, reason: str, *, hint: str | None 
     t["skipped_reason"] = reason
     if hint:
         t["skipped_hint"] = hint
+    return t
+
+
+def narrative_trace_user_disabled(settings: Settings, mode: str) -> dict[str, Any]:
+    """RAG not run because the run's context_sources excludes retrieval."""
+    t = _narrative_trace_base(settings)
+    t["skipped_reason"] = "user_disabled"
+    m = (mode or "").strip().lower()
+    if m == "brief":
+        t["skipped_hint"] = (
+            "You chose **brand brief only** for this run: Chroma narrative RAG was skipped on purpose. "
+            "Script/scene prompts use the template and long brief only."
+        )
+    elif m == "none":
+        t["skipped_hint"] = (
+            "You chose **neither** extra source: RAG and the long brand brief are omitted from script/scene prompts."
+        )
+    else:
+        t["skipped_hint"] = "Narrative RAG was turned off for this run (context sources selection)."
     return t
 
 

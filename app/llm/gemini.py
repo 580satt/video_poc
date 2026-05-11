@@ -14,6 +14,81 @@ from app.llm.json_utils import parse_json_loose
 logger = logging.getLogger(__name__)
 
 
+def _iter_response_parts(resp: Any):
+    """Yield Part objects from all candidates; tolerates missing/None content or parts."""
+    for cand in getattr(resp, "candidates", None) or []:
+        if cand is None:
+            continue
+        if isinstance(cand, dict):
+            content = cand.get("content")
+        else:
+            content = getattr(cand, "content", None)
+        if content is None:
+            continue
+        if isinstance(content, dict):
+            plist = content.get("parts")
+        else:
+            plist = getattr(content, "parts", None)
+        for part in plist or []:
+            if part is not None:
+                yield part
+
+
+def _inline_data_payload(part: Any) -> Any:
+    inl = part.get("inline_data") if isinstance(part, dict) else getattr(part, "inline_data", None)
+    if inl is None:
+        return None
+    if isinstance(inl, dict):
+        return inl.get("data")
+    return getattr(inl, "data", None)
+
+
+def first_inline_image_bytes_from_response(resp: Any) -> Optional[bytes]:
+    """First image bytes from a generate_content response, or None."""
+    for p in _iter_response_parts(resp):
+        d = _inline_data_payload(p)
+        if isinstance(d, (bytes, bytearray)) and d:
+            return bytes(d)
+        if isinstance(d, str) and d:
+            try:
+                return base64.b64decode(d)
+            except (ValueError, TypeError):
+                continue
+    return None
+
+
+def text_from_generate_content_response(resp: Any) -> str:
+    """Concatenate text parts without using ``resp.text`` (SDK can raise on odd candidates)."""
+    if not resp:
+        return ""
+    cands = getattr(resp, "candidates", None) or []
+    if not cands:
+        return ""
+    chunks: list[str] = []
+    for cand in cands[:1]:
+        if cand is None:
+            continue
+        content = cand.get("content") if isinstance(cand, dict) else getattr(cand, "content", None)
+        if content is None:
+            continue
+        plist = content.get("parts") if isinstance(content, dict) else getattr(content, "parts", None)
+        for part in plist or []:
+            if part is None:
+                continue
+            if isinstance(part, dict):
+                t = part.get("text")
+                th = part.get("thought")
+            else:
+                t = getattr(part, "text", None)
+                th = getattr(part, "thought", None)
+            if not isinstance(t, str):
+                continue
+            if isinstance(th, bool) and th:
+                continue
+            chunks.append(t)
+    return "".join(chunks)
+
+
 class GeminiClient:
     """Thin async-friendly wrapper: call sync `generate_content` in a thread from FastAPI if needed."""
 
@@ -46,9 +121,7 @@ class GeminiClient:
             contents=prompt,
             config=cfg,
         )
-        if not resp or not resp.text:
-            return ""
-        return resp.text
+        return text_from_generate_content_response(resp).strip()
 
     def generate_json(
         self,
@@ -84,7 +157,7 @@ class GeminiClient:
             contents=contents,
             config=types.GenerateContentConfig(temperature=0.2),
         )
-        return (resp.text or "").strip() if resp else ""
+        return text_from_generate_content_response(resp).strip()
 
     def review_json(self, system_and_user: str) -> str:
         return self.generate_text(
@@ -106,7 +179,7 @@ class GeminiClient:
             contents=parts,
             config=types.GenerateContentConfig(temperature=0.1),
         )
-        return (resp.text or "").strip() if resp else ""
+        return text_from_generate_content_response(resp).strip()
 
     def generate_image(
         self,
@@ -138,17 +211,13 @@ class GeminiClient:
             return None
         if not resp:
             return None
-        for c in (resp.candidates or []):
-            for p in c.content.parts or []:
-                if getattr(p, "inline_data", None) and p.inline_data:
-                    d = p.inline_data.data
-                    if isinstance(d, (bytes, bytearray)) and d:
-                        return bytes(d)
-                    if isinstance(d, str) and d:
-                        try:
-                            return base64.b64decode(d)
-                        except (ValueError, TypeError):
-                            pass
+        try:
+            found = first_inline_image_bytes_from_response(resp)
+        except (AttributeError, TypeError) as exc:
+            logger.warning("Could not parse image from model response: %s", exc)
+            found = None
+        if found:
+            return found
         logger.warning(
             "Image model %s returned no image bytes; use an image generation model (e.g. gemini-2.5-flash-image).",
             self._image,

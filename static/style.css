@@ -69,6 +69,63 @@ header h1 {
 .rag-column-lead {
   margin: 0 0 0.65rem;
 }
+.context-summary-strip {
+  margin-bottom: 0.85rem;
+}
+.context-pill-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+.context-pill {
+  font-size: 0.78rem;
+  padding: 0.35rem 0.55rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  line-height: 1.35;
+}
+.context-pill-on {
+  border-color: #3d7a55;
+  background: rgba(61, 122, 85, 0.18);
+  color: #c5f0d1;
+}
+.context-pill-off {
+  color: var(--muted);
+}
+.context-pill-warn {
+  border-color: #b0883a;
+  background: rgba(176, 136, 58, 0.15);
+  color: #fdd663;
+}
+.context-pill-note {
+  margin: 0.5rem 0 0;
+}
+.context-mode-line {
+  margin: 0 0 0.45rem;
+  font-size: 0.84rem;
+}
+.context-omit-banner {
+  margin: 0 0 0.65rem;
+  padding: 0.5rem 0.6rem;
+  border-radius: 8px;
+  border: 1px solid #4a5f8a;
+  background: rgba(40, 65, 120, 0.28);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+.context-subheading {
+  font-size: 0.88rem;
+  font-weight: 600;
+  margin: 0.85rem 0 0.25rem;
+  letter-spacing: 0.02em;
+}
+.context-sub-lead {
+  margin: 0 0 0.5rem;
+}
+.user-brief-pre {
+  max-height: 18rem;
+}
 .rag-panel-body {
   font-size: 0.82rem;
 }

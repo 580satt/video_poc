@@ -64,6 +64,7 @@ _RUN_EXPORT_KEYS: tuple[str, ...] = (
     "target_runtime_seconds",
     "target_runtime_max_seconds",
     "product_template",
+    "brand_psychology_context",
     "rag_context_narrative",
     "rag_narrative_trace",
     "story",
@@ -139,6 +140,8 @@ async def create_run(
     goal: str = Form(""),
     target_audience: str = Form(""),
     notes: str = Form(""),
+    brand_psychology_context: str = Form(""),
+    context_sources: str = Form("both"),
     target_runtime_seconds: Optional[str] = Form(None),
     target_runtime_max_seconds: Optional[str] = Form(None),
     story_scenes_provider: Optional[str] = Form(None),
@@ -148,12 +151,17 @@ async def create_run(
     tr = float(target_runtime_seconds) if target_runtime_seconds not in (None, "") else s.target_runtime_seconds
     tmax = float(target_runtime_max_seconds) if target_runtime_max_seconds not in (None, "") else s.target_runtime_max_seconds
     rid = new_run_id()
+    cs = (context_sources or "both").strip().lower()
+    if cs not in ("both", "rag", "brief", "none"):
+        cs = "both"
     raw: dict = {
         "product_name": product_name,
         "brand": brand,
         "goal": goal,
         "target_audience": target_audience,
         "notes": notes,
+        "brand_psychology_context": brand_psychology_context,
+        "context_sources": cs,
     }
     if story_scenes_provider not in (None, ""):
         raw["story_scenes_provider"] = story_scenes_provider.strip()

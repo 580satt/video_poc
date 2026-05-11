@@ -21,8 +21,10 @@ from app.models.schemas import (
     SceneItem,
     validate_scenes_against_max,
 )
+from app.graph.context_prefs import context_source_flags, normalize_context_sources
 from app.graph.progress import step_status_patch
 from app.rag.chroma_narrative import (
+    narrative_trace_user_disabled,
     query_narrative_rag_with_trace,
     query_review_memory,
     upsert_review_memory,
@@ -97,6 +99,69 @@ def _story_scenes_provider(state: StorybookState) -> str:
     if p in ("wavespeed", "claude", "claude_opus", "opus", "anthropic"):
         return "wavespeed"
     return "gemini"
+
+
+_MAX_BRAND_PSYCHOLOGY_CHARS = 60_000
+
+
+def _normalize_brand_psychology_context(val: Any) -> str:
+    s = str(val or "").strip()
+    if len(s) > _MAX_BRAND_PSYCHOLOGY_CHARS:
+        return (
+            s[:_MAX_BRAND_PSYCHOLOGY_CHARS]
+            + "\n\n[Truncated: input exceeded safe limit for model context.]"
+        )
+    return s
+
+
+def _rag_block_for_prompt(rag: str) -> str:
+    rag = (rag or "").strip()
+    if not rag:
+        return ""
+    return (
+        "\n\n---\nRETRIEVED NARRATIVE REFERENCE (RAG — optional library context; "
+        "use only where it fits the brief and template):\n"
+        f"{rag}\n---\n"
+    )
+
+
+def _brand_psychology_block_for_prompt(brief: str) -> str:
+    brief = (brief or "").strip()
+    if not brief:
+        return ""
+    return (
+        "\n\n---\nUSER BRAND / PSYCHOLOGY / INSIGHTS BRIEF (mandatory when present — align claims, tone, "
+        "emotional angle, and brand cues with this text; do not contradict the product template):\n"
+        f"{brief}\n---\n"
+    )
+
+
+def _no_extra_context_note(use_rag: bool, use_brief: bool) -> str:
+    if use_rag or use_brief:
+        return ""
+    return (
+        "\n\n---\nNo narrative RAG and no user brand/psychology brief for this run (per user selection). "
+        "Use only the template JSON and these instructions.\n---\n"
+    )
+
+
+def _reviewer_context_excerpt(state: StorybookState) -> str:
+    """Compact excerpts so reviewers know what the writer was given beyond the template."""
+    use_rag, use_brief = context_source_flags(state.get("raw_user_input"))
+    parts: list[str] = []
+    rag = (state.get("rag_context_narrative") or "").strip()
+    if use_rag and rag:
+        cap = 4500
+        tail = "…" if len(rag) > cap else ""
+        parts.append(f"RAG narrative reference (excerpt for review): {rag[:cap]}{tail}")
+    brief = (state.get("brand_psychology_context") or "").strip()
+    if use_brief and brief:
+        cap = 8000
+        tail = "…" if len(brief) > cap else ""
+        parts.append(f"User brand/psychology brief (excerpt for review): {brief[:cap]}{tail}")
+    if not parts:
+        return ""
+    return "\n\n" + "\n\n".join(parts)
 
 
 async def _call_text(fn, *a, **kw):
@@ -208,6 +273,11 @@ def _pt_from_merged(data: dict[str, Any], tr: float, tmax: float) -> dict[str, A
 async def node_build_template(state: StorybookState) -> dict[str, Any]:
     tr, tmax = state["target_runtime_seconds"], state["target_runtime_max_seconds"]
     raw = dict(state.get("raw_user_input") or {})
+    cs = normalize_context_sources(raw)
+    raw = {**raw, "context_sources": cs}
+    brief = _normalize_brand_psychology_context(raw.get("brand_psychology_context"))
+    if brief:
+        raw = {**raw, "brand_psychology_context": brief}
     image_desc = ""
     if state.get("product_image") and state.get("product_image_mime"):
         image_desc = await _call_text(
@@ -241,19 +311,25 @@ async def node_build_template(state: StorybookState) -> dict[str, Any]:
             tr,
             tmax,
         )
-    rag, rag_trace = await _call_text(
-        query_narrative_rag_with_trace,
-        pt,
-        raw,
-        _settings(),
-    )
-    if rag:
-        logger.info("[rag] narrative context length=%s", len(rag))
+    use_rag, _ = context_source_flags(raw)
+    if use_rag:
+        rag, rag_trace = await _call_text(
+            query_narrative_rag_with_trace,
+            pt,
+            raw,
+            _settings(),
+        )
+        if rag:
+            logger.info("[rag] narrative context length=%s", len(rag))
+    else:
+        rag, rag_trace = "", narrative_trace_user_disabled(_settings(), cs)
 
     await _store().update_run(
         state["run_id"],
         {
             "product_template": pt,
+            "brand_psychology_context": brief,
+            "raw_input": raw,
             "status": "running",
             "rag_context_narrative": rag,
             "rag_narrative_trace": rag_trace,
@@ -267,6 +343,8 @@ async def node_build_template(state: StorybookState) -> dict[str, Any]:
     )
     return {
         "product_template": pt,
+        "raw_user_input": raw,
+        "brand_psychology_context": brief,
         "status": "running",
         "rag_context_narrative": rag,
         "rag_narrative_trace": rag_trace,
@@ -280,8 +358,11 @@ async def node_write_script(state: StorybookState) -> dict[str, Any]:
     pt = state.get("product_template") or {}
     n = (state.get("story_draft_count") or 0) + 1
     feedback = (state.get("script_reviewer_feedback") or "").strip()
+    use_rag, use_brief = context_source_flags(state.get("raw_user_input"))
     rag = (state.get("rag_context_narrative") or "").strip()
-    rag_block = f"\n\n{rag}\n" if rag else ""
+    bp = (state.get("brand_psychology_context") or "").strip()
+    rag_block = _rag_block_for_prompt(rag) if use_rag else ""
+    bp_block = _brand_psychology_block_for_prompt(bp) if use_brief else ""
     pace = _story_pacing_instruction(tr, tmax)
     p = f"""You write a clear, engaging ad story for a storybook (voiceover / read-aloud). The PRIMARY goal is to advertise: {pt.get("product_name")} by {pt.get("brand", "")}. Tone: {pt.get("tone")}. Audience: {pt.get("target_audience")}. Goals: {pt.get("goal")}.
 
@@ -292,7 +373,7 @@ Hard time cap: the full story must be deliverable within **{tmax} seconds** when
 Return ONLY the story body text, no title line, no section headers.
 
 Template JSON: {json.dumps(pt, ensure_ascii=False)}
-{rag_block}
+{rag_block}{bp_block}{_no_extra_context_note(use_rag, use_brief)}
 {f"Revise per reviewer feedback: {feedback}" if feedback else ""}"""
     prov = _story_scenes_provider(state)
     if prov == "wavespeed":
@@ -342,9 +423,10 @@ async def node_review_script(state: StorybookState) -> dict[str, Any]:
     )
     mem_block = f"\n{mem}\n" if mem.strip() else ""
     p = f"""You are a strict ad reviewer. You MUST score the output from 0 (unusable) to 5 (excellent). Return ONLY valid JSON: {{"rating": <0-5 integer>, "feedback": "brief actionable notes"}}
-Rubric in order: (1) product advertising is strong, (2) the story is **appropriately developed for the {tmax}s** slot (at moderate read-aloud pace, longer runtimes need enough substance—not a tiny 5-8s blurb for a 15-20s brief), (3) creative, (4) matches template, (5) no contradictions.
+Rubric in order: (1) product advertising is strong, (2) the story is **appropriately developed for the {tmax}s** slot (at moderate read-aloud pace, longer runtimes need enough substance—not a tiny 5-8s blurb for a 15-20s brief), (3) creative, (4) matches template, (5) respects the **user brand / psychology brief** and any **RAG reference** only when excerpts appear below (the writer did not see sources omitted there), (6) no contradictions.
 
 Target runtime: {tr}-{tmax}s. Template: {json.dumps(pt, ensure_ascii=False)}
+{_reviewer_context_excerpt(state)}
 {mem_block}
 STORY:
 {story}"""
@@ -483,8 +565,11 @@ async def node_write_scenes(state: StorybookState) -> dict[str, Any]:
     story = state.get("story") or ""
     n = (state.get("scenes_draft_count") or 0) + 1
     feedback = (state.get("scenes_reviewer_feedback") or "").strip()
+    use_rag, use_brief = context_source_flags(state.get("raw_user_input"))
     rag = (state.get("rag_context_narrative") or "").strip()
-    rag_block = f"\n\n{rag}\n" if rag else ""
+    bp = (state.get("brand_psychology_context") or "").strip()
+    rag_block = _rag_block_for_prompt(rag) if use_rag else ""
+    bp_block = _brand_psychology_block_for_prompt(bp) if use_brief else ""
     scene_pace = _scene_pacing_instruction(tr, tmax)
     p = f"""Create scene-by-scene JSON for a live-action / photoreal TV ad (key visuals as **photographs**, not drawings). Return ONLY a JSON object with:
   "style_bible": string (fixed **photographic** look: camera/lens, light, color grade; professional commercial photo shoot, not cartoon or illustration),
@@ -500,7 +585,7 @@ Rules: The sum of suggested_duration_sec must be **<= {tmax}** (and should usual
 Target runtime max: {tmax} seconds. Nominal: {tr} seconds.
 Story: {story}
 Product template: {json.dumps(pt, ensure_ascii=False)}
-{rag_block}
+{rag_block}{bp_block}{_no_extra_context_note(use_rag, use_brief)}
 {f"Address reviewer feedback: {feedback}" if feedback else ""}"""
     prov = _story_scenes_provider(state)
     if prov == "wavespeed":
@@ -598,9 +683,10 @@ async def node_review_scenes(state: StorybookState) -> dict[str, Any]:
     )
     mem_block = f"\n{mem}\n" if mem.strip() else ""
     p = f"""You are a strict ad reviewer. You MUST score the output from 0 (unusable) to 5 (excellent). Return ONLY valid JSON: {{"rating": <0-5 integer>, "feedback": "brief actionable notes"}}
-Rubric: (1) product-first, (2) total duration sum vs cap {tmax}, (3) full story covered **with a scene count and pacing that fit a {tmax}s spot** (penalize dumping a long script into only ~5 generic scenes when the cap is 15-25s), (4) product placement, (5) cross-scene consistency, (6) match template.
+Rubric: (1) product-first, (2) total duration sum vs cap {tmax}, (3) full story covered **with a scene count and pacing that fit a {tmax}s spot** (penalize dumping a long script into only ~5 generic scenes when the cap is 15-25s), (4) product placement, (5) cross-scene consistency, (6) match template, (7) honor the **user brand / psychology brief** and **RAG reference** only when excerpts appear below.
 
 Template: {json.dumps(pt, ensure_ascii=False)}
+{_reviewer_context_excerpt(state)}
 {mem_block}
 Story: {story}
 Scenes JSON: {json.dumps(sp, ensure_ascii=False)}"""

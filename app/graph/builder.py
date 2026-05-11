@@ -12,7 +12,8 @@ from app.db.mongo import RunStore, get_run_store
 from app.graph import nodes as N
 from app.graph.state import StorybookState
 from app.llm.gemini import GeminiClient
-from app.rag.chroma_narrative import narrative_trace_failed, query_narrative_rag_with_trace
+from app.graph.context_prefs import context_source_flags, normalize_context_sources
+from app.rag.chroma_narrative import narrative_trace_failed, narrative_trace_user_disabled, query_narrative_rag_with_trace
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +114,7 @@ def _base_state() -> dict[str, Any]:
         "pending_error": None,
         "image_pass_full": True,
         "rag_context_narrative": "",
+        "brand_psychology_context": "",
         "rag_narrative_trace": {},
         "script_review_history": [],
         "scenes_review_history": [],
@@ -181,10 +183,13 @@ async def run_regenerate(
     graph = build_app_graph()
     tr = float(doc.get("target_runtime_seconds", s.target_runtime_seconds))
     tmax = float(doc.get("target_runtime_max_seconds", s.target_runtime_max_seconds))
-    raw = doc.get("raw_input") or {}
+    raw = dict(doc.get("raw_input") or {})
+    cs = normalize_context_sources(raw)
+    raw = {**raw, "context_sources": cs}
     pt = doc.get("product_template")
     story = doc.get("story") or ""
     sc = doc.get("scenes")
+    brief = str(doc.get("brand_psychology_context") or raw.get("brand_psychology_context") or "").strip()
     init: dict[str, Any] = {
         **_base_state(),
         "run_id": run_id,
@@ -196,6 +201,7 @@ async def run_regenerate(
         "product_template": pt,
         "story": story,
         "scenes_payload": sc,
+        "brand_psychology_context": brief,
     }
     if from_step == "script":
         if not pt:
@@ -249,20 +255,29 @@ async def run_regenerate(
         rt = doc.get("rag_narrative_trace")
         init["rag_narrative_trace"] = rt if isinstance(rt, dict) else {}
     if from_step in ("script", "scenes") and isinstance(pt, dict):
-        try:
-            ctx, trace = await asyncio.to_thread(query_narrative_rag_with_trace, pt, raw, s)
-            init["rag_context_narrative"] = ctx
-            init["rag_narrative_trace"] = trace
-            await st.update_run(
-                run_id,
-                {"rag_context_narrative": ctx, "rag_narrative_trace": trace},
-            )
-        except Exception as e:
-            logger.warning("RAG for regenerate failed: %s", e)
+        use_rag, _ = context_source_flags(raw)
+        if use_rag:
+            try:
+                ctx, trace = await asyncio.to_thread(query_narrative_rag_with_trace, pt, raw, s)
+                init["rag_context_narrative"] = ctx
+                init["rag_narrative_trace"] = trace
+                await st.update_run(
+                    run_id,
+                    {"rag_context_narrative": ctx, "rag_narrative_trace": trace},
+                )
+            except Exception as e:
+                logger.warning("RAG for regenerate failed: %s", e)
+                init["rag_context_narrative"] = ""
+                init["rag_narrative_trace"] = narrative_trace_failed(
+                    s, f"exception: {e}", hint="Unexpected error while refreshing RAG during regenerate."
+                )
+                await st.update_run(
+                    run_id,
+                    {"rag_context_narrative": "", "rag_narrative_trace": init["rag_narrative_trace"]},
+                )
+        else:
             init["rag_context_narrative"] = ""
-            init["rag_narrative_trace"] = narrative_trace_failed(
-                s, f"exception: {e}", hint="Unexpected error while refreshing RAG during regenerate."
-            )
+            init["rag_narrative_trace"] = narrative_trace_user_disabled(s, cs)
             await st.update_run(
                 run_id,
                 {"rag_context_narrative": "", "rag_narrative_trace": init["rag_narrative_trace"]},
